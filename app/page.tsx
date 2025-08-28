@@ -167,6 +167,8 @@ export default function PoBoxMatchPage() {
   const [isRealTimeActive, setIsRealTimeActive] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [worker, setWorker] = useState<any>(null);
+  const [debugInfo, setDebugInfo] = useState<string>('');
+  const [lastOcrText, setLastOcrText] = useState<string>('');
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const realTimeIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -188,8 +190,14 @@ export default function PoBoxMatchPage() {
   // 初始化Tesseract worker
   useEffect(() => {
     const initWorker = async () => {
-      const newWorker = await createWorker('chi_sim+eng');
-      setWorker(newWorker);
+      try {
+        console.log('Initializing Tesseract worker...');
+        const newWorker = await createWorker('chi_sim+eng');
+        console.log('Tesseract worker initialized successfully');
+        setWorker(newWorker);
+      } catch (error) {
+        console.error('Failed to initialize Tesseract worker:', error);
+      }
     };
     initWorker();
 
@@ -246,13 +254,28 @@ export default function PoBoxMatchPage() {
 
   const startCamera = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      console.log('Starting camera...');
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        } 
+      });
       setCameraStream(stream);
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        // 等待视频加载完成
+        videoRef.current.onloadedmetadata = () => {
+          console.log('Video loaded, dimensions:', {
+            width: videoRef.current?.videoWidth,
+            height: videoRef.current?.videoHeight
+          });
+        };
       }
+      console.log('Camera started successfully');
     } catch (error) {
       console.error('Failed to start camera:', error);
+      alert('无法启动摄像头，请检查摄像头权限');
     }
   };
 
@@ -269,26 +292,59 @@ export default function PoBoxMatchPage() {
   };
 
   const captureAndProcessOCR = async (isRealTime: boolean = false) => {
-    if (!videoRef.current || !canvasRef.current || !worker || isProcessing) return;
+    if (!videoRef.current || !canvasRef.current || !worker || isProcessing) {
+      console.log('OCR prerequisites not met:', {
+        hasVideo: !!videoRef.current,
+        hasCanvas: !!canvasRef.current,
+        hasWorker: !!worker,
+        isProcessing
+      });
+      return;
+    }
 
     setIsProcessing(true);
     try {
+      console.log('Starting OCR processing...');
+      
       const canvas = canvasRef.current;
       const context = canvas.getContext('2d');
-      if (!context) return;
+      if (!context) {
+        console.error('Failed to get canvas context');
+        return;
+      }
+
+      // 确保视频有有效的尺寸
+      if (videoRef.current.videoWidth === 0 || videoRef.current.videoHeight === 0) {
+        console.error('Video dimensions are zero');
+        return;
+      }
 
       canvas.width = videoRef.current.videoWidth;
       canvas.height = videoRef.current.videoHeight;
       context.drawImage(videoRef.current, 0, 0);
 
+      console.log('Canvas prepared, starting OCR recognition...');
       const { data: { text } } = await worker.recognize(canvas);
       const ocrText = text.trim();
+      
+      console.log('OCR result:', ocrText);
+      setLastOcrText(ocrText);
+      setDebugInfo(`OCR识别完成: ${ocrText ? ocrText.length : 0} 个字符`);
 
       if (ocrText && csvData.length > 0) {
+        console.log('Processing match with CSV data...');
         const matchResult = findBestMatch(ocrText, csvData);
         if (matchResult) {
+          console.log('Match found:', matchResult);
           setMatchResults(prev => [matchResult, ...prev.slice(0, 4)]);
+          setDebugInfo(`匹配成功! 置信度: ${(matchResult.confidence * 100).toFixed(1)}%`);
+        } else {
+          console.log('No match found for OCR text:', ocrText);
+          setDebugInfo(`未找到匹配项，OCR文本: ${ocrText}`);
         }
+      } else {
+        console.log('No OCR text or CSV data available');
+        setDebugInfo(ocrText ? '请先上传CSV文件' : 'OCR未识别到文字');
       }
     } catch (error) {
       console.error('OCR processing failed:', error);
@@ -422,6 +478,20 @@ export default function PoBoxMatchPage() {
                       {cameraStream ? "关闭" : "开启"}
                     </Button>
                   </div>
+                  
+                  {/* 调试信息 */}
+                  {debugInfo && (
+                    <div className="text-xs text-gray-600 bg-gray-100 p-2 rounded">
+                      <div className="font-medium">调试信息:</div>
+                      <div>{debugInfo}</div>
+                      {lastOcrText && (
+                        <div className="mt-1">
+                          <div className="font-medium">OCR文本:</div>
+                          <div className="bg-white p-1 rounded text-xs">{lastOcrText}</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
