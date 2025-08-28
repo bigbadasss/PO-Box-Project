@@ -21,6 +21,8 @@ interface MatchResult {
   similarity: number;
   ocrText: string;
   matchedSegment: string;
+  fieldScores?: {[key: string]: number};
+  keywordMatches?: number;
 }
 
 interface CSVFileInfo {
@@ -54,14 +56,37 @@ const calculateLevenshteinDistance = (str1: string, str2: string): number => {
   return matrix[str2.length][str1.length];
 };
 
+// 改进的文本标准化函数
 const normalizeString = (str: string): string => {
   return str
     .toLowerCase()
     .trim()
-    .replace(/\s+/g, '')
-    .replace(/[^\w\u4e00-\u9fff]/g, '');
+    .replace(/\s+/g, '') // 移除所有空格
+    .replace(/[^\w\u4e00-\u9fff]/g, '') // 只保留字母、数字、中文字符
+    .replace(/[0-9]/g, ''); // 移除数字，因为OCR经常识别错误
 };
 
+// 提取关键词（中文姓名、地址关键词等）
+const extractKeywords = (text: string): string[] => {
+  const keywords: string[] = [];
+  
+  // 提取中文姓名（2-4个字符）
+  const nameMatches = text.match(/[\u4e00-\u9fff]{2,4}/g) || [];
+  keywords.push(...nameMatches);
+  
+  // 提取地址关键词
+  const addressKeywords = ['区', '市', '省', '路', '街', '号', '楼', '室', '单元'];
+  addressKeywords.forEach(keyword => {
+    if (text.includes(keyword)) {
+      const context = text.match(new RegExp(`[\\u4e00-\\u9fff]*${keyword}[\\u4e00-\\u9fff]*`, 'g')) || [];
+      keywords.push(...context);
+    }
+  });
+  
+  return [...new Set(keywords)]; // 去重
+};
+
+// 计算字符串相似度的多种算法
 const calculateSimilarity = (str1: string, str2: string): number => {
   const cleanStr1 = normalizeString(str1);
   const cleanStr2 = normalizeString(str2);
@@ -69,23 +94,54 @@ const calculateSimilarity = (str1: string, str2: string): number => {
   if (!cleanStr1 || !cleanStr2) return 0;
   if (cleanStr1 === cleanStr2) return 1;
   
-  if (cleanStr1.includes(cleanStr2) || cleanStr2.includes(cleanStr1)) return 0.85;
-  
-  if (cleanStr1.length >= 2 && cleanStr2.length >= 2) {
-    if (cleanStr1.substring(0, 2) === cleanStr2.substring(0, 2)) return 0.7;
+  // 完全包含关系
+  if (cleanStr1.includes(cleanStr2) || cleanStr2.includes(cleanStr1)) {
+    const longer = cleanStr1.length > cleanStr2.length ? cleanStr1 : cleanStr2;
+    const shorter = cleanStr1.length > cleanStr2.length ? cleanStr2 : cleanStr1;
+    return 0.9 + (shorter.length / longer.length) * 0.1;
   }
   
+  // 前缀匹配（对于姓名特别有用）
+  if (cleanStr1.length >= 2 && cleanStr2.length >= 2) {
+    const prefix1 = cleanStr1.substring(0, 2);
+    const prefix2 = cleanStr2.substring(0, 2);
+    if (prefix1 === prefix2) {
+      const suffixSimilarity = calculateLevenshteinDistance(
+        cleanStr1.substring(2), 
+        cleanStr2.substring(2)
+      ) / Math.max(cleanStr1.length - 2, cleanStr2.length - 2, 1);
+      return 0.8 + (1 - suffixSimilarity) * 0.2;
+    }
+  }
+  
+  // Levenshtein距离
   const distance = calculateLevenshteinDistance(cleanStr1, cleanStr2);
   const maxLength = Math.max(cleanStr1.length, cleanStr2.length);
   const levenshteinSimilarity = maxLength === 0 ? 0 : 1 - distance / maxLength;
   
+  // Jaccard相似度（字符级别）
   const set1 = new Set(cleanStr1.split(''));
   const set2 = new Set(cleanStr2.split(''));
   const intersection = new Set([...set1].filter(x => set2.has(x)));
   const union = new Set([...set1, ...set2]);
   const jaccardSimilarity = union.size === 0 ? 0 : intersection.size / union.size;
   
-  return (levenshteinSimilarity * 0.7 + jaccardSimilarity * 0.3);
+  // 关键词匹配
+  const keywords1 = extractKeywords(str1);
+  const keywords2 = extractKeywords(str2);
+  const keywordMatches = keywords1.filter(k1 => 
+    keywords2.some(k2 => calculateLevenshteinDistance(k1, k2) <= 1)
+  ).length;
+  const keywordSimilarity = keywords1.length > 0 && keywords2.length > 0 
+    ? keywordMatches / Math.max(keywords1.length, keywords2.length) 
+    : 0;
+  
+  // 综合相似度计算
+  return (
+    levenshteinSimilarity * 0.5 + 
+    jaccardSimilarity * 0.2 + 
+    keywordSimilarity * 0.3
+  );
 };
 
 const findBestSubstring = (text: string, target: string): string => {
@@ -114,24 +170,39 @@ const findBestMatch = (ocrText: string, csvData: CSVRow[]): MatchResult | null =
 
   let bestMatch: MatchResult | null = null;
   let bestScore = 0;
+  const allMatches: Array<{row: CSVRow, score: number, details: any}> = [];
+
+  // 预处理OCR文本
+  const ocrKeywords = extractKeywords(ocrText);
+  const normalizedOcr = normalizeString(ocrText);
+  
+  console.log('OCR预处理:', {
+    original: ocrText,
+    normalized: normalizedOcr,
+    keywords: ocrKeywords
+  });
 
   for (const row of csvData) {
     const matchedFields: string[] = [];
     let totalSimilarity = 0;
     let fieldCount = 0;
     let matchedSegment = '';
+    let fieldScores: {[key: string]: number} = {};
 
     // 检查每个字段
     for (const [field, value] of Object.entries(row)) {
       if (typeof value === 'string' && value.trim()) {
         const similarity = calculateSimilarity(ocrText, value);
-        if (similarity > 0.3) {
+        fieldScores[field] = similarity;
+        
+        // 降低匹配阈值，提高召回率
+        if (similarity > 0.2) {
           matchedFields.push(field);
           totalSimilarity += similarity;
           fieldCount++;
           
           // 对于地址字段，提取匹配的文本片段
-          if (field === 'address' && similarity > 0.5) {
+          if (field === 'address' && similarity > 0.4) {
             matchedSegment = findBestSubstring(ocrText, value);
           }
         }
@@ -140,7 +211,28 @@ const findBestMatch = (ocrText: string, csvData: CSVRow[]): MatchResult | null =
 
     if (fieldCount > 0) {
       const averageSimilarity = totalSimilarity / fieldCount;
-      const confidence = (averageSimilarity * 0.7 + (fieldCount / Object.keys(row).length) * 0.3);
+      
+      // 改进的置信度计算
+      let confidence = averageSimilarity * 0.6; // 基础相似度权重
+      confidence += (fieldCount / Object.keys(row).length) * 0.2; // 匹配字段数量权重
+      
+      // 关键词匹配权重
+      const rowKeywords = extractKeywords(Object.values(row).join(' '));
+      const keywordMatches = ocrKeywords.filter(k1 => 
+        rowKeywords.some(k2 => calculateLevenshteinDistance(k1, k2) <= 1)
+      ).length;
+      confidence += (keywordMatches / Math.max(ocrKeywords.length, rowKeywords.length, 1)) * 0.2;
+      
+      allMatches.push({
+        row,
+        score: confidence,
+        details: {
+          fieldScores,
+          matchedFields,
+          averageSimilarity,
+          keywordMatches
+        }
+      });
       
       if (confidence > bestScore) {
         bestScore = confidence;
@@ -150,13 +242,55 @@ const findBestMatch = (ocrText: string, csvData: CSVRow[]): MatchResult | null =
           confidence,
           similarity: averageSimilarity,
           ocrText,
-          matchedSegment: matchedSegment || findBestSubstring(ocrText, row.address || row.name || '')
+          matchedSegment: matchedSegment || findBestSubstring(ocrText, row.address || row.name || ''),
+          fieldScores,
+          keywordMatches
         };
       }
     }
   }
 
+  // 输出调试信息
+  if (allMatches.length > 0) {
+    console.log('匹配结果排序:', allMatches
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)
+      .map(m => ({
+        name: m.row.name,
+        score: m.score.toFixed(3),
+        details: m.details
+      }))
+    );
+  }
+
   return bestMatch;
+};
+
+// OCR文本预处理函数
+const preprocessOCRText = (text: string): string => {
+  let processed = text;
+  
+  // 常见OCR错误修正
+  const corrections: {[key: string]: string} = {
+    '0': 'O', // 数字0误识别为字母O
+    '1': 'l', // 数字1误识别为字母l
+    '5': 'S', // 数字5误识别为字母S
+    '8': 'B', // 数字8误识别为字母B
+    'l': '1', // 字母l误识别为数字1
+    'O': '0', // 字母O误识别为数字0
+    'S': '5', // 字母S误识别为数字5
+    'B': '8', // 字母B误识别为数字8
+  };
+  
+  // 应用修正
+  Object.entries(corrections).forEach(([wrong, correct]) => {
+    processed = processed.replace(new RegExp(wrong, 'g'), correct);
+  });
+  
+  // 移除多余的标点符号和空格
+  processed = processed.replace(/[^\w\u4e00-\u9fff\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  
+  return processed;
 };
 
 export default function PoBoxMatchPage() {
@@ -325,9 +459,13 @@ export default function PoBoxMatchPage() {
 
       console.log('Canvas prepared, starting OCR recognition...');
       const { data: { text } } = await worker.recognize(canvas);
-      const ocrText = text.trim();
+      let ocrText = text.trim();
       
-      console.log('OCR result:', ocrText);
+      // OCR文本预处理
+      ocrText = preprocessOCRText(ocrText);
+      
+      console.log('OCR result (original):', text.trim());
+      console.log('OCR result (processed):', ocrText);
       setLastOcrText(ocrText);
       setDebugInfo(`OCR识别完成: ${ocrText ? ocrText.length : 0} 个字符`);
 
@@ -529,12 +667,32 @@ export default function PoBoxMatchPage() {
                         </div>
                         
                         <div className="space-y-2">
+                          <div className="flex justify-between items-center">
+                            <span className="text-sm font-medium text-gray-700">置信度: </span>
+                            <span className="text-sm font-bold text-green-600">
+                              {(match.confidence * 100).toFixed(1)}%
+                            </span>
+                          </div>
+                          
                           <div>
                             <span className="text-sm font-medium text-gray-700">匹配字段: </span>
                             <span className="text-sm text-gray-600">
                               {match.matchedFields.join(', ')}
                             </span>
                           </div>
+                          
+                          {match.fieldScores && (
+                            <div>
+                              <span className="text-sm font-medium text-gray-700">字段得分: </span>
+                              <div className="text-xs text-gray-500 mt-1">
+                                {Object.entries(match.fieldScores).map(([field, score]) => (
+                                  <span key={field} className="inline-block mr-2">
+                                    {field}: {(score * 100).toFixed(0)}%
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                           
                           {match.matchedSegment && (
                             <div>
