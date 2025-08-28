@@ -313,13 +313,13 @@ const CSVOCRDemo: React.FC = () => {
     if (pendingCameraStart && videoRef.current && isCameraActive && !cameraStream) {
       const initCamera = async () => {
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            video: { 
-              width: { ideal: 640, max: 1280 },
-              height: { ideal: 480, max: 720 },
-              facingMode: 'user'
-            }
-          });
+                     const stream = await navigator.mediaDevices.getUserMedia({
+             video: { 
+               width: { ideal: 640, max: 1280 },
+               height: { ideal: 480, max: 720 },
+               facingMode: 'environment' // 使用后置摄像头
+             }
+           });
           setCameraStream(stream);
           
           if (videoRef.current) {
