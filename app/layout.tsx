@@ -6,7 +6,8 @@ const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
   title: "PO Box Matcher",
-  description: "PO Box匹配系统 - 基于Next.js的CSV OCR识别和匹配应用",
+  description: "PO Box Matcher - CSV OCR recognition and matching application based on Next.js",
+  viewport: "width=device-width, initial-scale=1",
 }
 
 export default function RootLayout({
@@ -15,7 +16,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="zh-CN">
+    <html lang="en">
       <body className={inter.className}>{children}</body>
     </html>
   )
