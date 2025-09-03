@@ -1164,33 +1164,63 @@ const CSVOCRDemo: React.FC = () => {
 
         {/* 下方：匹配结果模块 - 移动端优化 */}
         <div className="flex justify-center">
-          <Card className="w-full max-w-md mx-auto lg:mx-0">
-            {matchResults.length > 0 && (
-              <div className="p-3 sm:p-4 border-b border-gray-200">
-                <div className="text-center">
-                  <div className="text-sm sm:text-base text-gray-800">
-                    <div className="flex justify-center gap-2 flex-wrap">
-                      <span className="text-red-600 font-bold">{extractPOBoxNumber(matchResults[0].row.email || matchResults[0].row['PO Box'] || matchResults[0].row['po box'] || matchResults[0].row.pobox || '') || '—'}</span>
-                      <span>{matchResults[0].row.name || '—'}</span>
-                      <span>{(() => {
-                        const streetNum = matchResults[0].row.streetNumber;
-                        const address = matchResults[0].row.address;
-                        console.log('显示地址 - streetNumber:', JSON.stringify(streetNum), 'address:', JSON.stringify(address));
-                        return (streetNum ? streetNum + ' ' : '') + (address || '—');
-                      })()}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
+          <Card className="w-full max-w-4xl mx-auto lg:mx-0">
             <CardContent className="p-3 sm:p-6">
               {matchResults.length === 0 ? (
                 <div className="text-center py-6 sm:py-8 text-gray-500">
                   <p className="text-sm sm:text-base">No matching results</p>
                 </div>
               ) : (
-                <div className="text-center text-xs sm:text-sm text-gray-600 bg-gray-100 p-2 sm:p-3 rounded border border-gray-200">
-                  Found {matchResults.length} matching records
+                <div>
+                  <div className="text-center text-xs sm:text-sm text-gray-600 bg-gray-100 p-2 sm:p-3 rounded border border-gray-200 mb-4">
+                    Found {matchResults.length} matching records - Showing top {Math.min(8, matchResults.length)}
+                  </div>
+                  
+                  {/* 显示前8个匹配结果 */}
+                  <div className="space-y-2 sm:space-y-3">
+                    {matchResults.slice(0, 8).map((result, index) => (
+                      <div key={index} className={`p-3 sm:p-4 rounded-lg border-2 ${index === 0 ? 'border-red-500 bg-red-50' : 'border-gray-200 bg-white'}`}>
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                          {/* 排名 */}
+                          <div className={`text-xs font-bold px-2 py-1 rounded-full ${index === 0 ? 'bg-red-500 text-white' : 'bg-gray-500 text-white'} flex-shrink-0 w-6 h-6 flex items-center justify-center`}>
+                            {index + 1}
+                          </div>
+                          
+                          {/* PO Box号码 */}
+                          <div className="flex-shrink-0">
+                            <span className="text-red-600 font-bold text-sm sm:text-base">
+                              {extractPOBoxNumber(result.row.email || result.row['PO Box'] || result.row['po box'] || result.row.pobox || '') || '—'}
+                            </span>
+                          </div>
+                          
+                          {/* 客户姓名 */}
+                          <div className="flex-shrink-0 min-w-0">
+                            <span className="text-gray-800 font-medium text-sm sm:text-base truncate">
+                              {result.row.name || '—'}
+                            </span>
+                          </div>
+                          
+                          {/* 完整地址 */}
+                          <div className="flex-1 min-w-0">
+                            <span className="text-gray-700 text-sm sm:text-base">
+                              {(() => {
+                                const streetNum = result.row.streetNumber;
+                                const address = result.row.address;
+                                return (streetNum ? streetNum + ' ' : '') + (address || '—');
+                              })()}
+                            </span>
+                          </div>
+                          
+                          {/* 匹配度 */}
+                          <div className="flex-shrink-0">
+                            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
+                              {Math.round(result.similarity * 100)}%
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </CardContent>
