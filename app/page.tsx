@@ -842,8 +842,12 @@ const CSVOCRDemo: React.FC = () => {
             {matchResults.length > 0 && (
               <div className="p-3 sm:p-4 border-b border-gray-200">
                 <div className="text-center">
-                  <div className="text-lg sm:text-2xl font-bold text-red-600 break-all">
-                    PO Box: {matchResults[0].row.email || matchResults[0].row['PO Box'] || matchResults[0].row['po box'] || matchResults[0].row.pobox || '—'}
+                  <div className="text-sm sm:text-base text-gray-800">
+                    <div className="flex justify-center gap-2 flex-wrap">
+                      <span className="text-red-600 font-bold">{matchResults[0].row.email || matchResults[0].row['PO Box'] || matchResults[0].row['po box'] || matchResults[0].row.pobox || '—'}</span>
+                      <span>{matchResults[0].row.name || '—'}</span>
+                      <span>{matchResults[0].row.address || '—'}</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -854,47 +858,8 @@ const CSVOCRDemo: React.FC = () => {
                   <p className="text-sm sm:text-base">No matching results</p>
                 </div>
               ) : (
-                <div className="space-y-3 sm:space-y-4">
-                  {matchResults.map((match, index) => (
-                    <div key={index} className="border border-gray-200 rounded-lg p-3 sm:p-4 bg-gray-50">
-                      {/* 匹配文本显示框 - 移动端优化 */}
-                      {match.matchedSegment && (
-                        <div className="mb-3 p-2 bg-white border border-gray-200 rounded text-xs sm:text-sm">
-                          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
-                            <span className="text-gray-700 font-medium">Matched Text:</span>
-                            <span className="font-mono text-gray-800 bg-gray-100 px-1 rounded break-all">
-                              {match.matchedSegment}
-                            </span>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* CSV完整记录 - 移动端优化 */}
-                      <div className="bg-white rounded p-3 border-l-4 border-gray-400">
-                        <div className="space-y-2 text-xs sm:text-sm">
-                          <div className="flex flex-col sm:flex-row">
-                            <span className="w-full sm:w-20 text-gray-600 font-medium mb-1 sm:mb-0">Name:</span>
-                            <span className="text-gray-800 break-all">{match.row.name || '—'}</span>
-                          </div>
-                          <div className="flex flex-col sm:flex-row">
-                            <span className="w-full sm:w-20 text-gray-600 font-medium mb-1 sm:mb-0">Address:</span>
-                            <span className="text-gray-800 break-all">{match.row.address || '—'}</span>
-                          </div>
-                          <div className="flex flex-col sm:flex-row">
-                            <span className="w-full sm:w-20 text-gray-600 font-medium mb-1 sm:mb-0">PO Box:</span>
-                            <span className="text-gray-800 break-all font-semibold text-red-600">
-                              {match.row.email || match.row['PO Box'] || match.row['po box'] || match.row.pobox || '—'}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  
-                  {/* 匹配统计 - 移动端优化 */}
-                  <div className="text-center text-xs sm:text-sm text-gray-600 bg-gray-100 p-2 sm:p-3 rounded border border-gray-200">
-                    Found {matchResults.length} matching records
-                  </div>
+                <div className="text-center text-xs sm:text-sm text-gray-600 bg-gray-100 p-2 sm:p-3 rounded border border-gray-200">
+                  Found {matchResults.length} matching records
                 </div>
               )}
             </CardContent>
