@@ -741,9 +741,9 @@ const CSVOCRDemo: React.FC = () => {
                           >
                           </div>
                           
-                          {/* 识别文本显示框 - 透明背景，深绿色边框和字体 */}
+                          {/* 识别文本显示框 - 透明背景，红色边框和字体 */}
                           <div 
-                            className="absolute bg-transparent text-green-700 rounded-md text-xs flex items-center justify-center font-mono overflow-hidden border-2 border-green-700"
+                            className="absolute bg-transparent text-red-500 rounded-md text-xs flex items-center justify-center font-mono overflow-hidden border-2 border-red-500"
                             style={{
                               width: 'min(300px, 80vw)',   // 适合摄像头框内的宽度
                               height: '60px',   // 高度增加50% (40px -> 60px)
