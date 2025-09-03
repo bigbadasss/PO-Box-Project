@@ -11,6 +11,10 @@ interface CSVRow {
   name: string;
   address: string;
   email: string;
+  serviceDescription: string;
+  customerName: string;
+  streetNumber: string;
+  suburb: string;
   [key: string]: any;
 }
 
@@ -167,167 +171,306 @@ const extractFirstKeyWord = (text: string): string => {
   return firstWordMatch ? firstWordMatch[1] : '';
 };
 
-// 道路名优先的包含匹配算法
+// 从PO Box字符串中提取数字
+const extractPOBoxNumber = (poBoxText: string): string => {
+  if (!poBoxText) return '';
+  
+  // 匹配PO Box后面的数字
+  const match = poBoxText.match(/(?:PO\s*Box\s*|pobox\s*|po\s*box\s*)(\d+)/i);
+  if (match && match[1]) {
+    return match[1];
+  }
+  
+  // 如果没有找到PO Box格式，但是字符串包含数字，返回第一个数字
+  const numberMatch = poBoxText.match(/\d+/);
+  return numberMatch ? numberMatch[0] : poBoxText;
+};
+
+// 移除地址中的常见后缀词
+const removeAddressSuffixes = (address: string): string => {
+  if (!address) return '';
+  
+  // 常见的道路/地址后缀词（英文）
+  const suffixes = [
+    'road', 'rd', 'street', 'st', 'avenue', 'ave', 'drive', 'dr', 
+    'lane', 'ln', 'way', 'close', 'court', 'ct', 'place', 'pl',
+    'crescent', 'cres', 'terrace', 'tce', 'circuit', 'cct',
+    'boulevard', 'blvd', 'highway', 'hwy', 'esplanade', 'esp',
+    'parade', 'pde', 'grove', 'gr', 'walk', 'gardens', 'gdns'
+  ];
+  
+  const normalized = normalizeString(address);
+  const words = normalized.split(' ').filter(word => word.length > 0);
+  
+  // 如果最后一个词是后缀词，移除它
+  if (words.length > 1 && suffixes.includes(words[words.length - 1])) {
+    const filteredWords = words.slice(0, -1);
+    console.log(`  地址后缀过滤: "${address}" -> "${filteredWords.join(' ')}" (移除了"${words[words.length - 1]}")`);
+    return filteredWords.join(' ');
+  }
+  
+  return normalized;
+};
+
+// 街道号码+地址匹配算法 - 专门匹配 "34 ALF CASEY ROAD" 格式
 const findBestMatch = (ocrText: string, csvRow: CSVRow): {similarity: number, matchedFields: string[], matchedSegment: string} => {
   let bestSimilarity = 0;
   const matchedFields: string[] = [];
   let matchedSegment = '';
   
-  // 只处理地址字段
-  const csvValue = csvRow.address;
-  if (!csvValue) {
+  // 检查必要字段 - 至少要有地址
+  if (!csvRow.address) {
     return { similarity: 0, matchedFields: [], matchedSegment: '' };
   }
   
   const ocrNormalized = normalizeString(ocrText);
-  const csvNormalized = normalizeString(csvValue);
+  console.log(`=== 街道号码+地址匹配 ===`);
+  console.log(`OCR文本: "${ocrText}" -> 标准化: "${ocrNormalized}"`);
+  console.log(`CSV数据: 门牌号="${csvRow.streetNumber}", 地址="${csvRow.address}"`);
   
-  // 1. 提取道路关键词（优先匹配要素）
-  const roadKeywords = ['road', 'rd', 'street', 'st', 'avenue', 'ave', 'drive', 'dr', 'lane', 'ln', 'way', 'close', 'court', 'ct', 'place', 'pl'];
+  // 1. 提取OCR中的数字和地址部分
+  const ocrNumbers = ocrText.match(/^\d+/)?.[0] || ''; // 开头的数字
+  const ocrAddressPart = ocrText.replace(/^\d+\s*/, '').trim(); // 移除开头数字后的部分
   
-  const ocrWords = ocrNormalized.split(' ').filter(word => word.length >= 2);
-  let roadName = '';
-  let hasRoadKeyword = false;
+  console.log(`  OCR解析: 数字="${ocrNumbers}", 地址部分="${ocrAddressPart}"`);
   
-  // 找到道路关键词，提取道路名
-  for (let i = 0; i < ocrWords.length; i++) {
-    const word = ocrWords[i];
-    if (roadKeywords.includes(word)) {
-      hasRoadKeyword = true;
-      // 道路名通常在关键词之前
-      if (i > 0) {
-        roadName = ocrWords[i - 1];
-      }
-      break;
-    }
-  }
+  // 2. 构建CSV完整地址用于比较
+  const csvFullAddress = csvRow.streetNumber ? `${csvRow.streetNumber} ${csvRow.address}`.trim() : csvRow.address;
+  const csvFullAddressNormalized = normalizeString(csvFullAddress);
+  const csvAddressNormalized = normalizeString(csvRow.address);
   
-  // 如果没有找到道路关键词，取最长的词作为可能的道路名
-  if (!roadName && ocrWords.length > 0) {
-    roadName = ocrWords.reduce((longest, current) => 
-      current.length > longest.length ? current : longest
-    );
-  }
+  console.log(`  CSV完整地址: "${csvFullAddress}" -> 标准化: "${csvFullAddressNormalized}"`);
   
-  console.log(`  道路名提取: "${roadName}" (包含道路关键词: ${hasRoadKeyword})`);
+  // 3. 门牌号/街道前缀匹配检查
+  let numberMatchScore = 0;
+  const csvStreetNumber = csvRow.streetNumber ? csvRow.streetNumber.trim() : '';
+  const isCSVNumberDigit = /^\d+$/.test(csvStreetNumber); // 检查CSV中是否为纯数字
   
-  // 2. 提取和匹配数字
-  const ocrNumbers = ocrText.match(/\d+/g)?.join('') || '';
-  const csvNumbers = csvValue.match(/\d+/g)?.join('') || '';
-  
-  console.log(`  数字提取: OCR="${ocrNumbers}" vs CSV="${csvNumbers}"`);
-  
-  // 3. 道路名匹配（优先要素）
-  let roadMatchScore = 0;
-  if (roadName && roadName.length >= 3) {
-    if (csvNormalized.includes(roadName)) {
-      roadMatchScore = 0.9; // 道路名完全包含
-      console.log(`  ✅ 道路名匹配: "${roadName}" 在CSV地址中找到`);
+  if (ocrNumbers && csvStreetNumber && isCSVNumberDigit) {
+    // 情况1：OCR有数字，CSV也有数字门牌号 - 严格匹配
+    if (ocrNumbers === csvStreetNumber) {
+      numberMatchScore = 1.0;
+      console.log(`  ✅ 数字门牌号完全匹配: "${ocrNumbers}"`);
     } else {
-      // 检查道路名的相似度
-      const csvWords = csvNormalized.split(' ');
-      csvWords.forEach(csvWord => {
-        if (csvWord.length >= 3) {
-          const similarity = calculateSimilarity(roadName, csvWord);
-          if (similarity > roadMatchScore) {
-            roadMatchScore = similarity * 0.8; // 相似匹配最高80%
+      numberMatchScore = 0.1;
+      console.log(`  ❌ 数字门牌号不匹配: OCR"${ocrNumbers}" vs CSV"${csvStreetNumber}" - 严格模式拒绝`);
+    }
+  } else if (ocrNumbers && csvStreetNumber && !isCSVNumberDigit) {
+    // 情况2：OCR有数字，但CSV的streetNumber是文字（如"GLEN"） - 降级为地址匹配
+    numberMatchScore = 0.7; // 给较高基础分，让地址匹配决定
+    console.log(`  ⚠️  OCR有数字"${ocrNumbers}"但CSV streetNumber是文字"${csvStreetNumber}" - 降级为地址匹配`);
+  } else if (!ocrNumbers && csvStreetNumber && !isCSVNumberDigit) {
+    // 情况3：OCR无数字，CSV streetNumber是文字 - 这种情况需要匹配街道前缀
+    const ocrNormalized = normalizeString(ocrText);
+    const csvStreetNormalized = normalizeString(csvStreetNumber);
+    
+    // 检查OCR文本开头是否包含街道前缀
+    const ocrWords = ocrNormalized.split(' ').filter(w => w.length >= 2);
+    const ocrStartsWithPrefix = ocrWords.length > 0 && calculateSimilarity(ocrWords[0], csvStreetNormalized) >= 0.8;
+    
+    if (ocrStartsWithPrefix) {
+      numberMatchScore = 0.95; // 开头匹配给最高分
+      console.log(`  ✅ 街道前缀完美匹配: OCR开头"${ocrWords[0]}" ≈ CSV前缀"${csvStreetNumber}"`);
+    } else if (ocrNormalized.includes(csvStreetNormalized) || csvStreetNormalized.includes(ocrNormalized)) {
+      numberMatchScore = 0.8; // 包含匹配给中等分
+      console.log(`  ✅ 街道前缀包含匹配: OCR包含"${csvStreetNumber}"`);
+    } else {
+      numberMatchScore = 0.4; // 给较低基础分让地址匹配决定
+      console.log(`  ⚠️  街道前缀未匹配，依赖地址匹配 (OCR:"${ocrWords[0]}" vs CSV:"${csvStreetNumber}")`);
+    }
+  } else if (!ocrNumbers && (!csvStreetNumber || csvStreetNumber === '')) {
+    numberMatchScore = 1.0; // 都没有门牌号，认为匹配
+    console.log(`  ✅ 都无门牌号，允许匹配`);
+  } else if (ocrNumbers && (!csvStreetNumber || csvStreetNumber === '')) {
+    // OCR有门牌号但CSV没有 - 降级到地址匹配
+    numberMatchScore = 0.5; 
+    console.log(`  ⚠️  OCR有门牌号"${ocrNumbers}"但CSV无streetNumber，降级处理`);
+  } else {
+    numberMatchScore = 0.3;
+    console.log(`  ⚠️  其他情况: OCR="${ocrNumbers}", CSV="${csvStreetNumber}"`);
+  }
+  
+  // 4. 地址名称匹配检查 - 移除后缀词后进行匹配
+  let addressMatchScore = 0;
+  const addressToMatch = ocrAddressPart || ocrText; // 如果没有地址部分，使用整个OCR文本
+  
+  if (addressToMatch && csvRow.address) {
+    // 对OCR和CSV地址都进行后缀词过滤
+    const ocrAddressFiltered = removeAddressSuffixes(addressToMatch);
+    const csvAddressFiltered = removeAddressSuffixes(csvRow.address);
+    
+    console.log(`  地址过滤后比较: OCR"${ocrAddressFiltered}" vs CSV"${csvAddressFiltered}"`);
+    
+    // 完全包含检查
+    if (csvAddressFiltered.includes(ocrAddressFiltered)) {
+      addressMatchScore = 0.95;
+      console.log(`  ✅ 地址完全包含: "${ocrAddressFiltered}" 在 "${csvAddressFiltered}" 中找到`);
+    } else if (ocrAddressFiltered.includes(csvAddressFiltered)) {
+      addressMatchScore = 0.9;
+      console.log(`  ✅ 地址反向包含: "${csvAddressFiltered}" 在 "${ocrAddressFiltered}" 中找到`);
+    } else {
+      // 单词级别匹配 - 使用过滤后的地址，优先考虑连续词组匹配
+      const ocrWords = ocrAddressFiltered.split(' ').filter(w => w.length >= 2);
+      const csvWords = csvAddressFiltered.split(' ').filter(w => w.length >= 2);
+      
+      // 1. 检查连续词组匹配（如 "alpine station"）
+      let sequenceBonus = 0;
+      for (let i = 0; i < ocrWords.length - 1; i++) {
+        const ocrSequence = ocrWords[i] + ' ' + ocrWords[i + 1];
+        for (let j = 0; j < csvWords.length - 1; j++) {
+          const csvSequence = csvWords[j] + ' ' + csvWords[j + 1];
+          if (calculateSimilarity(ocrSequence, csvSequence) >= 0.9) {
+            sequenceBonus += 0.3; // 连续词组匹配奖励
+            console.log(`    ✅ 连续词组匹配: "${ocrSequence}" ≈ "${csvSequence}"`);
           }
         }
-      });
-      console.log(`  道路名相似度: ${Math.round(roadMatchScore * 100)}%`);
-    }
-  }
-  
-  // 3. 整体包含匹配（辅助要素）
-  let containmentScore = 0;
-  if (csvNormalized.includes(ocrNormalized)) {
-    containmentScore = 0.95; // 完全包含
-    console.log(`  ✅ 完全包含匹配`);
-  } else {
-    // 分词包含检查
-    let foundWords = 0;
-    ocrWords.forEach(ocrWord => {
-      if (csvNormalized.includes(ocrWord)) {
-        foundWords++;
-        console.log(`    ✅ 找到词: "${ocrWord}"`);
       }
-    });
-    
-    if (ocrWords.length > 0) {
-      containmentScore = (foundWords / ocrWords.length) * 0.8; // 分词匹配最高80%
-      console.log(`  分词匹配: ${foundWords}/${ocrWords.length} = ${Math.round(containmentScore * 100)}%`);
+      
+      // 2. 单词级别匹配
+      let matchedWords = 0;
+      let bestWordMatches: string[] = [];
+      
+      ocrWords.forEach(ocrWord => {
+        let bestMatch = '';
+        let bestSimilarity = 0;
+        
+        csvWords.forEach(csvWord => {
+          const similarity = calculateSimilarity(ocrWord, csvWord);
+          if (similarity >= 0.8 && similarity > bestSimilarity) {
+            bestSimilarity = similarity;
+            bestMatch = csvWord;
+          }
+        });
+        
+        if (bestMatch) {
+          matchedWords++;
+          bestWordMatches.push(`"${ocrWord}" ≈ "${bestMatch}" (${Math.round(bestSimilarity * 100)}%)`);
+        }
+      });
+      
+      if (ocrWords.length > 0) {
+        const baseScore = (matchedWords / ocrWords.length) * 0.85;
+        addressMatchScore = Math.min(0.95, baseScore + sequenceBonus); // 加上连续匹配奖励，最高95%
+        console.log(`  地址单词匹配(过滤后): ${matchedWords}/${ocrWords.length} = ${Math.round(baseScore * 100)}% + 连续奖励${Math.round(sequenceBonus * 100)}% = ${Math.round(addressMatchScore * 100)}%`);
+        bestWordMatches.forEach(match => console.log(`    ✅ ${match}`));
+      }
+      
+      // 如果过滤后的匹配度不高，尝试原始地址匹配作为备用
+      if (addressMatchScore < 0.6) {
+        const ocrAddressNormalized = normalizeString(addressToMatch);
+        const csvAddressNormalized = normalizeString(csvRow.address);
+        const backupScore = calculateSimilarity(ocrAddressNormalized, csvAddressNormalized) * 0.7;
+        if (backupScore > addressMatchScore) {
+          addressMatchScore = backupScore;
+          console.log(`  使用备用匹配(未过滤): ${Math.round(backupScore * 100)}%`);
+        }
+      }
     }
   }
   
-  // 4. 综合评分（道路名优先）
+  // 5. 整体匹配检查（备用）
+  let fullMatchScore = 0;
+  if (ocrNormalized && csvFullAddressNormalized) {
+    if (csvFullAddressNormalized.includes(ocrNormalized)) {
+      fullMatchScore = 0.95;
+      console.log(`  ✅ 完整地址包含匹配`);
+    } else if (ocrNormalized.includes(csvFullAddressNormalized)) {
+      fullMatchScore = 0.9;
+      console.log(`  ✅ 完整地址反向包含匹配`);
+    } else {
+      fullMatchScore = calculateSimilarity(ocrNormalized, csvFullAddressNormalized) * 0.8;
+      console.log(`  完整地址相似度: ${Math.round(fullMatchScore * 100)}%`);
+    }
+  }
+  
+  // 6. 综合评分策略
   const weights = {
-    roadName: 0.7,       // 道路名权重最高
-    containment: 0.3     // 整体包含权重
+    number: 0.4,        // 门牌号权重
+    address: 0.5,       // 地址名权重  
+    fullMatch: 0.1      // 整体匹配权重
   };
   
-  bestSimilarity = (roadMatchScore * weights.roadName) + (containmentScore * weights.containment);
+  bestSimilarity = (numberMatchScore * weights.number) + 
+                   (addressMatchScore * weights.address) + 
+                   (fullMatchScore * weights.fullMatch);
   
-  // 5. 数字验证（关键过滤条件）
-  let numberMatchValid = true; // 默认通过
-  let numberMatchReason = '';
-  
-  if (ocrNumbers && csvNumbers) {
-    // 如果OCR和CSV都有数字，则必须匹配
-    if (ocrNumbers === csvNumbers) {
-      numberMatchReason = `数字完全匹配 (${ocrNumbers})`;
-    } else {
-      numberMatchValid = false;
-      numberMatchReason = `数字不匹配 (OCR:${ocrNumbers} vs CSV:${csvNumbers})`;
-    }
-  } else if (ocrNumbers && !csvNumbers) {
-    // OCR有数字但CSV没有数字，不匹配
-    numberMatchValid = false;
-    numberMatchReason = `OCR有数字(${ocrNumbers})但CSV无数字`;
-  } else if (!ocrNumbers && csvNumbers) {
-    // OCR没有数字但CSV有数字，不匹配
-    numberMatchValid = false;
-    numberMatchReason = `OCR无数字但CSV有数字(${csvNumbers})`;
-  } else {
-    // 都没有数字，允许匹配
-    numberMatchReason = `都无数字，允许匹配`;
-  }
-  
-  console.log(`  数字验证: ${numberMatchValid} (${numberMatchReason})`);
-  
-  // 6. 匹配判断（道路名优先 + 数字验证）
+  // 7. 匹配判断逻辑
   let isValidMatch = false;
   let matchReason = '';
   
-  if (!numberMatchValid) {
-    // 数字验证不通过，直接拒绝
-    isValidMatch = false;
-    matchReason = `数字验证失败 (${numberMatchReason})`;
-  } else if (roadMatchScore >= 0.7) {
-    // 道路名匹配良好且数字验证通过
-    if (containmentScore >= 0.3) {
-      isValidMatch = true;
-      matchReason = `道路名${Math.round(roadMatchScore * 100)}% + 包含度${Math.round(containmentScore * 100)}% + ${numberMatchReason}`;
+  // 检查是否有门牌号信息
+  const hasOcrNumber = ocrNumbers && ocrNumbers.length > 0;
+  const hasCsvStreetNumber = csvStreetNumber && csvStreetNumber.length > 0;
+  
+  if (hasOcrNumber && hasCsvStreetNumber && isCSVNumberDigit) {
+    // 情况1：OCR有数字，CSV也有数字门牌号 - 严格验证
+    if (ocrNumbers === csvStreetNumber) {
+      if (addressMatchScore >= 0.7) {
+        isValidMatch = true;
+        matchReason = `完整地址匹配: 门牌号100% + 地址${Math.round(addressMatchScore * 100)}%`;
+      } else {
+        matchReason = `门牌号匹配但地址匹配度不足 (门牌号100%, 地址${Math.round(addressMatchScore * 100)}%)`;
+      }
     } else {
-      matchReason = `道路名匹配但包含度不足 (道路${Math.round(roadMatchScore * 100)}%, 包含${Math.round(containmentScore * 100)}%)`;
+      isValidMatch = false;
+      matchReason = `数字门牌号不匹配 (OCR:"${ocrNumbers}" vs CSV:"${csvStreetNumber}")`;
     }
-  } else if (containmentScore >= 0.8) {
-    // 高包含度可以弥补道路名匹配不足
-    isValidMatch = true;
-    matchReason = `高包含度匹配${Math.round(containmentScore * 100)}% + ${numberMatchReason}`;
+  } else if (hasOcrNumber && hasCsvStreetNumber && !isCSVNumberDigit) {
+    // 情况2：OCR有数字，CSV street number是文字 - 主要看地址匹配
+    if (addressMatchScore >= 0.8) {
+      isValidMatch = true;
+      matchReason = `地址主导匹配: ${Math.round(addressMatchScore * 100)}% (CSV街道前缀:"${csvStreetNumber}")`;
+    } else {
+      matchReason = `地址匹配度不足: ${Math.round(addressMatchScore * 100)}% (需要≥80%用于文字前缀情况)`;
+    }
+  } else if (!hasOcrNumber && hasCsvStreetNumber && !isCSVNumberDigit) {
+    // 情况3：无OCR数字，CSV street number是文字 - 最适合Glen Alpine Station的情况
+    if (numberMatchScore >= 0.8 && addressMatchScore >= 0.7) {
+      isValidMatch = true;
+      matchReason = `街道前缀+地址匹配: 前缀${Math.round(numberMatchScore * 100)}% + 地址${Math.round(addressMatchScore * 100)}%`;
+    } else if (addressMatchScore >= 0.85) {
+      isValidMatch = true;
+      matchReason = `强地址匹配: ${Math.round(addressMatchScore * 100)}%`;
+    } else {
+      matchReason = `匹配度不足: 前缀${Math.round(numberMatchScore * 100)}% + 地址${Math.round(addressMatchScore * 100)}%`;
+    }
+  } else if (!hasOcrNumber && !hasCsvStreetNumber) {
+    // 情况2：都没有门牌号 - 纯地址匹配
+    if (addressMatchScore >= 0.85) {
+      isValidMatch = true;
+      matchReason = `纯地址匹配: ${Math.round(addressMatchScore * 100)}%`;
+    } else if (fullMatchScore >= 0.8) {
+      isValidMatch = true;
+      matchReason = `整体地址匹配: ${Math.round(fullMatchScore * 100)}%`;
+    }
   } else {
-    matchReason = `道路名和包含度都不足 (道路${Math.round(roadMatchScore * 100)}%, 包含${Math.round(containmentScore * 100)}%)`;
+    // 情况3：门牌号不对称 - 降级匹配
+    if (bestSimilarity >= 0.7) {
+      isValidMatch = true;
+      matchReason = `不对称匹配: 综合${Math.round(bestSimilarity * 100)}%`;
+    } else if (addressMatchScore >= 0.9) {
+      isValidMatch = true;
+      matchReason = `强地址匹配: ${Math.round(addressMatchScore * 100)}%`;
+    }
+  }
+  
+  // 兜底：高综合匹配度
+  if (!isValidMatch && bestSimilarity >= 0.75) {
+    isValidMatch = true;
+    matchReason = `高综合匹配: ${Math.round(bestSimilarity * 100)}%`;
+  }
+  
+  if (!isValidMatch) {
+    matchReason = `匹配度不足 (门牌号${Math.round(numberMatchScore * 100)}%, 地址${Math.round(addressMatchScore * 100)}%, 综合${Math.round(bestSimilarity * 100)}%)`;
   }
   
   if (isValidMatch) {
-    matchedFields.push('address');
+    matchedFields.push('streetAddress');
     matchedSegment = ocrText;
   }
   
-  console.log(`=== 道路名优先匹配 ===`);
-  console.log(`OCR片段: "${ocrText}"`);
-  console.log(`完整地址: "${csvValue}"`);
-  console.log(`  道路名匹配: ${Math.round(roadMatchScore * 100)}% ("${roadName}")`);
-  console.log(`  整体包含度: ${Math.round(containmentScore * 100)}%`);
+  console.log(`  门牌号匹配: ${Math.round(numberMatchScore * 100)}%`);
+  console.log(`  地址匹配: ${Math.round(addressMatchScore * 100)}%`);
   console.log(`  综合评分: ${Math.round(bestSimilarity * 100)}%`);
   console.log(`  匹配结果: ${isValidMatch} (${matchReason})`);
   console.log(`========================`);
@@ -499,24 +642,42 @@ const CSVOCRDemo: React.FC = () => {
             const data = results.data as CSVRow[];
             // Normalize column names
             const normalizedData = data.map(row => {
-              const normalizedRow: CSVRow = { name: '', address: '', email: '' };
+              const normalizedRow: CSVRow = { 
+                name: '', 
+                address: '', 
+                email: '',
+                serviceDescription: '',
+                customerName: '',
+                streetNumber: '',
+                suburb: ''
+              };
               
               Object.keys(row).forEach(key => {
                 const lowerKey = key.toLowerCase();
-                if (lowerKey.includes('name') || lowerKey.includes('姓名')) {
-                  normalizedRow.name = row[key] || '';
-                } else if (lowerKey.includes('address') || lowerKey.includes('地址')) {
+                if (lowerKey.includes('service description') || lowerKey === 'service description') {
+                  normalizedRow.serviceDescription = row[key] || '';
+                  normalizedRow.email = row[key] || ''; // 保持兼容性，PO Box信息显示在email字段
+                } else if (lowerKey.includes('customer name') || lowerKey === 'customer name') {
+                  normalizedRow.customerName = row[key] || '';
+                  normalizedRow.name = row[key] || ''; // 保持兼容性
+                } else if (lowerKey.includes('street number') || lowerKey === 'street number') {
+                  normalizedRow.streetNumber = row[key] || '';
+                  console.log(`解析Street Number: "${key}" -> "${row[key]}" -> normalizedRow.streetNumber: "${normalizedRow.streetNumber}"`);
+                } else if (lowerKey.includes('address') && !lowerKey.includes('street')) {
                   normalizedRow.address = row[key] || '';
-                } else if (lowerKey.includes('email') || lowerKey.includes('邮箱') || lowerKey.includes('编号')) {
-                  normalizedRow.email = row[key] || '';
+                } else if (lowerKey.includes('suburb')) {
+                  normalizedRow.suburb = row[key] || '';
                 }
+                // 保存原始数据
                 normalizedRow[key] = row[key];
               });
               
               return normalizedRow;
             });
             
-            const filteredData = normalizedData.filter(row => row.name || row.address || row.email);
+            const filteredData = normalizedData.filter(row => 
+              row.serviceDescription || row.customerName || row.streetNumber || row.address || row.suburb
+            );
             
             // Create file info object
             const fileInfo: CSVFileInfo = {
@@ -882,7 +1043,7 @@ const CSVOCRDemo: React.FC = () => {
                           
                           {/* 邮箱号码显示框 - 在识别框上方 */}
                           <div 
-                            className="absolute bg-transparent text-black font-bold rounded-md text-xs flex items-center justify-center font-mono overflow-hidden border-2 border-black"
+                            className="absolute bg-white text-red-600 font-bold rounded-md text-xs flex items-center justify-center font-mono overflow-hidden border-2 border-black"
                             style={{
                               width: 'min(300px, 80vw)',   // 与下方黑框相同宽度
                               height: '60px',   // 与下方黑框相同高度
@@ -892,7 +1053,7 @@ const CSVOCRDemo: React.FC = () => {
                               lineHeight: '24px' // 相应调整行高
                             }}
                           >
-                            {matchResults.length > 0 ? (matchResults[0].row.email || matchResults[0].row['PO Box'] || matchResults[0].row['po box'] || matchResults[0].row.pobox || 'No Match') : 'No Match'}
+                            {matchResults.length > 0 ? extractPOBoxNumber(matchResults[0].row.email || matchResults[0].row['PO Box'] || matchResults[0].row['po box'] || matchResults[0].row.pobox || '') || 'No Match' : 'No Match'}
                           </div>
                           
                           {/* 识别框 - 移动端自适应 */}
@@ -1009,9 +1170,14 @@ const CSVOCRDemo: React.FC = () => {
                 <div className="text-center">
                   <div className="text-sm sm:text-base text-gray-800">
                     <div className="flex justify-center gap-2 flex-wrap">
-                      <span className="text-red-600 font-bold">{matchResults[0].row.email || matchResults[0].row['PO Box'] || matchResults[0].row['po box'] || matchResults[0].row.pobox || '—'}</span>
+                      <span className="text-red-600 font-bold">{extractPOBoxNumber(matchResults[0].row.email || matchResults[0].row['PO Box'] || matchResults[0].row['po box'] || matchResults[0].row.pobox || '') || '—'}</span>
                       <span>{matchResults[0].row.name || '—'}</span>
-                      <span>{matchResults[0].row.address || '—'}</span>
+                      <span>{(() => {
+                        const streetNum = matchResults[0].row.streetNumber;
+                        const address = matchResults[0].row.address;
+                        console.log('显示地址 - streetNumber:', JSON.stringify(streetNum), 'address:', JSON.stringify(address));
+                        return (streetNum ? streetNum + ' ' : '') + (address || '—');
+                      })()}</span>
                     </div>
                   </div>
                 </div>
