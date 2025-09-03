@@ -58,8 +58,8 @@ const normalizeString = (str: string): string => {
   return str
     .toLowerCase()
     .trim()
-    .replace(/\s+/g, '') // 移除所有空格
-    .replace(/[^\w\u4e00-\u9fff]/g, ''); // 只保留字母数字和中文字符
+    .replace(/\s+/g, ' ') // 保留单个空格，不完全移除
+    .replace(/[^\w\s\u4e00-\u9fff-]/g, ''); // 保留空格和连字符，移除其他特殊字符
 };
 
 const calculateSimilarity = (str1: string, str2: string): number => {
@@ -120,7 +120,54 @@ const findBestSubstring = (text: string, target: string): string => {
   return '';
 };
 
-// 只匹配地址字段的函数
+// 计算更准确的匹配字符数
+const calculateMatchingChars = (str1: string, str2: string): number => {
+  const cleanStr1 = normalizeString(str1);
+  const cleanStr2 = normalizeString(str2);
+  
+  // 使用动态规划计算最长公共子序列长度
+  const dp = Array(cleanStr1.length + 1).fill(null).map(() => Array(cleanStr2.length + 1).fill(0));
+  
+  for (let i = 1; i <= cleanStr1.length; i++) {
+    for (let j = 1; j <= cleanStr2.length; j++) {
+      if (cleanStr1[i-1] === cleanStr2[j-1]) {
+        dp[i][j] = dp[i-1][j-1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i-1][j], dp[i][j-1]);
+      }
+    }
+  }
+  
+  return dp[cleanStr1.length][cleanStr2.length];
+};
+
+// 提取地址中的数字部分和街道名称部分
+const parseAddress = (address: string): {numbers: string, streetName: string} => {
+  const normalized = normalizeString(address);
+  // 匹配开头的数字部分
+  const numberMatch = normalized.match(/^[\d\s-]+/);
+  const numbers = numberMatch ? numberMatch[0].trim() : '';
+  const streetName = normalized.substring(numbers.length).trim();
+  
+  return { numbers, streetName };
+};
+
+// 提取关键单词（优先数字后的第一个单词，如果没有数字则取第一个有意义的单词）
+const extractFirstKeyWord = (text: string): string => {
+  const normalized = normalizeString(text);
+  
+  // 优先匹配数字后的第一个有意义单词（长度≥3）
+  const afterNumberMatch = normalized.match(/\d+\s+([a-zA-Z\u4e00-\u9fff]{3,})/);
+  if (afterNumberMatch) {
+    return afterNumberMatch[1];
+  }
+  
+  // 如果没有数字，取第一个有意义的单词（长度≥3）
+  const firstWordMatch = normalized.match(/([a-zA-Z\u4e00-\u9fff]{3,})/);
+  return firstWordMatch ? firstWordMatch[1] : '';
+};
+
+// 优化的地址匹配算法 - 以数字后第一个单词为主要匹配要素
 const findBestMatch = (ocrText: string, csvRow: CSVRow): {similarity: number, matchedFields: string[], matchedSegment: string} => {
   let bestSimilarity = 0;
   const matchedFields: string[] = [];
@@ -132,69 +179,126 @@ const findBestMatch = (ocrText: string, csvRow: CSVRow): {similarity: number, ma
     return { similarity: 0, matchedFields: [], matchedSegment: '' };
   }
   
-  // 地址字段匹配前8个字符
-  const csvAddressPrefix = normalizeString(csvValue).substring(0, 8);
   const ocrNormalized = normalizeString(ocrText);
+  // 移除CSV地址的最后一个单词后进行匹配
+  const csvWords = normalizeString(csvValue).split(' ').filter(word => word.length > 0);
+  const csvForMatching = csvWords.slice(0, -1).join(' '); // 移除最后一个单词
+  const csvNormalized = csvForMatching;
   
-  let addressPrefixSimilarity = 0;
-  let actualMatchLength = 0;
+  // 1. 提取关键要素
+  const ocrFirstWord = extractFirstKeyWord(ocrText); // OCR数字后的第一个单词
+  const ocrNumbers = ocrText.match(/\d+/g)?.join('') || '';
+  const csvNumbers = csvValue.match(/\d+/g)?.join('') || '';
   
-  if (csvAddressPrefix.length > 0) {
-    // 直接包含检查
-    if (ocrNormalized.includes(csvAddressPrefix)) {
-      addressPrefixSimilarity = 0.9; // 完全包含给高分
-      actualMatchLength = csvAddressPrefix.length;
-      
-      // 只提取完全匹配的字符部分
-      const startIndex = ocrNormalized.indexOf(csvAddressPrefix);
-      // 从原始OCR文本中找到对应的位置
-      let originalStartIndex = 0;
-      let normalizedIndex = 0;
-      for (let i = 0; i < ocrText.length; i++) {
-        const normalizedChar = normalizeString(ocrText[i]);
-        if (normalizedIndex === startIndex) {
-          originalStartIndex = i;
-          break;
-        }
-        normalizedIndex += normalizedChar.length;
-      }
-      // 提取完全匹配的字符
-      matchedSegment = ocrText.substring(originalStartIndex, originalStartIndex + csvAddressPrefix.length);
+  console.log(`  关键单词提取: OCR中数字后第一个单词 = "${ocrFirstWord}"`);
+  
+  // 2. 第一要素：数字后第一个单词匹配（权重最高）
+  let firstWordScore = 0;
+  if (ocrFirstWord) {
+    if (csvNormalized.includes(ocrFirstWord)) {
+      firstWordScore = 0.95; // 关键单词完全包含
+      console.log(`  ✅ 关键单词"${ocrFirstWord}"在CSV地址中找到`);
     } else {
-      // 计算前8个字符的相似度，并找出实际匹配的长度
-      addressPrefixSimilarity = calculateSimilarity(ocrNormalized, csvAddressPrefix);
-      
-      // 计算实际匹配的字符数（简化计算）
-      let matchCount = 0;
-      const minLength = Math.min(ocrNormalized.length, csvAddressPrefix.length);
-      for (let i = 0; i < minLength; i++) {
-        if (ocrNormalized[i] === csvAddressPrefix[i]) {
-          matchCount++;
+      // 检查相似性
+      const csvWords = csvNormalized.split(' ');
+      csvWords.forEach(csvWord => {
+        if (csvWord.length >= 3) {
+          const similarity = calculateSimilarity(ocrFirstWord, csvWord);
+          if (similarity > firstWordScore) {
+            firstWordScore = similarity * 0.9; // 相似匹配最高90分
+          }
         }
-      }
-      actualMatchLength = matchCount;
-      
-      if (addressPrefixSimilarity > 0.85) { // 提高阈值到85%
-        // 找到最相似的文本片段，但只显示匹配的部分
-        const bestMatch = findBestSubstring(ocrText, csvAddressPrefix);
-        matchedSegment = bestMatch;
-      }
+      });
+      console.log(`  关键单词"${ocrFirstWord}"最佳相似度: ${Math.round(firstWordScore * 100)}%`);
+    }
+  } else {
+    console.log(`  ❌ 未提取到关键单词（数字后的第一个单词）`);
+  }
+  
+  // 3. 第二要素：数字匹配（在关键单词匹配的基础上）
+  let numberScore = 0;
+  if (ocrNumbers && csvNumbers) {
+    if (csvNumbers.includes(ocrNumbers)) {
+      numberScore = 0.9; // 数字完全包含
+    } else {
+      numberScore = calculateSimilarity(ocrNumbers, csvNumbers) * 0.8;
     }
   }
   
-  bestSimilarity = addressPrefixSimilarity;
+  // 4. 辅助要素：整体包含度
+  let containmentScore = 0;
+  if (csvNormalized.includes(ocrNormalized)) {
+    containmentScore = 0.95;
+  } else if (ocrNormalized.length >= 4) {
+    const ocrParts = ocrNormalized.split(' ').filter(part => part.length >= 2);
+    let foundParts = 0;
+    ocrParts.forEach(part => {
+      if (csvNormalized.includes(part)) {
+        foundParts++;
+      }
+    });
+    containmentScore = foundParts / ocrParts.length * 0.9;
+  }
   
-  // 新的匹配条件：相似度≥85% 且 实际匹配字符数>3
-  if (addressPrefixSimilarity >= 0.85 && actualMatchLength > 3) {
+  // 5. 新的评分体系（关键单词为主导）
+  const weights = {
+    firstWord: 0.6,      // 关键单词权重最高
+    number: 0.25,        // 数字验证权重  
+    containment: 0.15    // 整体包含度权重
+  };
+  
+  bestSimilarity = (firstWordScore * weights.firstWord) + 
+                   (numberScore * weights.number) + 
+                   (containmentScore * weights.containment);
+  
+  // 6. 灵活的匹配条件
+  let isValidMatch = false;
+  let matchReason = '';
+  
+  if (!ocrNumbers) {
+    // 没有数字的情况：只需要关键单词匹配
+    if (firstWordScore >= 0.8) {
+      isValidMatch = true;
+      matchReason = `纯街道匹配${Math.round(firstWordScore * 100)}% (无数字)`;
+    } else if (firstWordScore >= 0.7) {
+      isValidMatch = true;
+      matchReason = `街道名匹配${Math.round(firstWordScore * 100)}% (无数字)`;
+    } else {
+      matchReason = `街道名匹配度不足 (${Math.round(firstWordScore * 100)}%, 无数字)`;
+    }
+  } else {
+    // 有数字的情况：需要关键单词 + 数字验证
+    if (firstWordScore >= 0.8) {
+      // 关键单词匹配度高，进一步检查数字
+      if (numberScore >= 0.7) {
+        isValidMatch = true;
+        matchReason = `关键单词${Math.round(firstWordScore * 100)}% + 数字${Math.round(numberScore * 100)}%`;
+      } else {
+        matchReason = `关键单词匹配但数字不符 (关键词${Math.round(firstWordScore * 100)}%, 数字${Math.round(numberScore * 100)}%)`;
+      }
+    } else if (firstWordScore >= 0.6 && numberScore >= 0.8) {
+      isValidMatch = true;
+      matchReason = `关键单词${Math.round(firstWordScore * 100)}% + 强数字匹配${Math.round(numberScore * 100)}%`;
+    } else {
+      matchReason = `关键单词匹配度不足 (${Math.round(firstWordScore * 100)}%)`;
+    }
+  }
+  
+  if (isValidMatch) {
     matchedFields.push('address');
+    matchedSegment = ocrText;
   }
   
-  console.log(`Address matching - OCR: "${ocrText}" vs CSV address prefix: "${csvAddressPrefix}" (from "${csvValue}") = ${Math.round(addressPrefixSimilarity * 100)}% (matched chars: ${actualMatchLength})`);
-  
-  // 如果没有找到匹配片段，使用OCR文本的开头部分
-  if (!matchedSegment && bestSimilarity > 0.8) {
-    matchedSegment = ocrText.substring(0, Math.min(50, ocrText.length)).trim();
-  }
+  console.log(`=== 关键单词主导匹配 ===`);
+  console.log(`OCR片段: "${ocrText}"`);
+  console.log(`完整地址: "${csvValue}"`);
+  console.log(`匹配用地址: "${csvForMatching}" (已移除最后一个单词)`);
+  console.log(`  关键单词匹配: ${Math.round(firstWordScore * 100)}% ("${ocrFirstWord}")`);
+  console.log(`  数字匹配: ${Math.round(numberScore * 100)}% (OCR:"${ocrNumbers}" vs CSV:"${csvNumbers}")`);
+  console.log(`  整体包含度: ${Math.round(containmentScore * 100)}%`);
+  console.log(`  综合评分: ${Math.round(bestSimilarity * 100)}%`);
+  console.log(`  匹配结果: ${isValidMatch} (${matchReason})`);
+  console.log(`========================`);
   
   return { similarity: bestSimilarity, matchedFields, matchedSegment };
 };
@@ -567,13 +671,15 @@ const CSVOCRDemo: React.FC = () => {
   const findMatches = (text: string): MatchResult[] => {
     const matches: MatchResult[] = [];
     
-    console.log('Finding address matches for OCR text:', text);
+    console.log('=== 开始查找匹配结果 ===');
+    console.log('OCR识别文本:', text);
     
     csvData.forEach((row, index) => {
       const matchResult = findBestMatch(text, row);
       
-      // 只检查地址字段匹配，使用85%阈值且匹配字符数>3
-      if (matchResult.similarity >= 0.85) {
+      // 严格的匹配条件：只有当匹配字段不为空时才算有效匹配
+      // 这确保了数字和街道名称都满足阈值要求
+      if (matchResult.matchedFields.length > 0) {
         matches.push({
           row,
           matchedFields: matchResult.matchedFields,
@@ -583,17 +689,29 @@ const CSVOCRDemo: React.FC = () => {
           matchedSegment: matchResult.matchedSegment
         });
         
-        console.log(`Address match found for row ${index}:`, {
-          similarity: matchResult.similarity,
-          matchedFields: matchResult.matchedFields,
+        console.log(`✅ 找到有效匹配 [行 ${index}]:`, {
+          name: row.name,
           address: row.address,
-          threshold: '85% (地址前8字符, >3字符)'
+          email: row.email,
+          similarity: Math.round(matchResult.similarity * 100) + '%',
+          matchedFields: matchResult.matchedFields
         });
+      } else {
+        console.log(`❌ 无效匹配 [行 ${index}]: ${row.address} (未满足阈值要求)`);
       }
     });
     
+    console.log(`=== 匹配完成，找到 ${matches.length} 个有效匹配 ===`);
+    
     // 按相似度排序，显示前8个最佳匹配
-    return matches.sort((a, b) => b.similarity - a.similarity).slice(0, 8);
+    const sortedMatches = matches.sort((a, b) => b.similarity - a.similarity).slice(0, 8);
+    
+    console.log('最终排序结果:');
+    sortedMatches.forEach((match, index) => {
+      console.log(`${index + 1}. ${match.row.address} (${Math.round(match.similarity * 100)}%)`);
+    });
+    
+    return sortedMatches;
   };
 
   return (
