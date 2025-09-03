@@ -730,6 +730,21 @@ const CSVOCRDemo: React.FC = () => {
                           {/* 半透明遮罩 */}
                           <div className="absolute inset-0 bg-black bg-opacity-30 rounded-lg"></div>
                           
+                          {/* 邮箱号码显示框 - 在识别框上方 */}
+                          <div 
+                            className="absolute bg-transparent text-black font-bold rounded-md text-xs flex items-center justify-center font-mono overflow-hidden border-2 border-black"
+                            style={{
+                              width: 'min(300px, 80vw)',   // 与下方黑框相同宽度
+                              height: '60px',   // 与下方黑框相同高度
+                              top: '-80px',     // 在识别框上方
+                              left: '-66px',    // 居中显示
+                              fontSize: '20px', // 与下方黑框相同字体大小
+                              lineHeight: '24px' // 相应调整行高
+                            }}
+                          >
+                            {matchResults.length > 0 ? (matchResults[0].row.email || matchResults[0].row['PO Box'] || matchResults[0].row['po box'] || matchResults[0].row.pobox || 'No Match') : 'No Match'}
+                          </div>
+                          
                           {/* 识别框 - 移动端自适应 */}
                           <div 
                             className="relative bg-transparent border-2 border-red-500 rounded-md shadow-lg"
@@ -741,13 +756,13 @@ const CSVOCRDemo: React.FC = () => {
                           >
                           </div>
                           
-                          {/* 识别文本显示框 - 透明背景，红色边框和字体 */}
+                          {/* 识别文本显示框 - 透明背景，黑色边框和加粗字体 */}
                           <div 
-                            className="absolute bg-transparent text-red-500 rounded-md text-xs flex items-center justify-center font-mono overflow-hidden border-2 border-red-500"
+                            className="absolute bg-transparent text-black font-bold rounded-md text-xs flex items-center justify-center font-mono overflow-hidden border-2 border-black"
                             style={{
                               width: 'min(300px, 80vw)',   // 适合摄像头框内的宽度
                               height: '60px',   // 高度增加50% (40px -> 60px)
-                              top: '80px',      // 在红色框和摄像头底部中间
+                              top: '50px',      // 往上移动，更靠近识别框
                               left: '-66px',    // 居中显示
                               fontSize: '20px', // 字体大小进一步增加
                               lineHeight: '24px' // 相应调整行高
