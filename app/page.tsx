@@ -741,19 +741,19 @@ const CSVOCRDemo: React.FC = () => {
                           >
                           </div>
                           
-                          {/* 识别文本显示框 - 移动端自适应 */}
+                          {/* 识别文本显示框 - 透明背景，深绿色边框和字体 */}
                           <div 
-                            className="absolute bg-green-500 text-white rounded-md text-xs flex items-center justify-center font-mono overflow-hidden"
+                            className="absolute bg-transparent text-green-700 rounded-md text-xs flex items-center justify-center font-mono overflow-hidden border-2 border-green-700"
                             style={{
-                              width: 'min(168px, 70vw)',   // 与识别框相同宽度
-                              height: '28px',   // 与识别框相同高度
-                              top: '38px',      // 在识别框下方10px处
-                              left: '0px',
-                              fontSize: '9px',  // 移动端稍小字体
-                              lineHeight: '11px'
+                              width: 'min(300px, 80vw)',   // 适合摄像头框内的宽度
+                              height: '60px',   // 高度增加50% (40px -> 60px)
+                              top: '80px',      // 在红色框和摄像头底部中间
+                              left: '-66px',    // 居中显示
+                              fontSize: '20px', // 字体大小进一步增加
+                              lineHeight: '24px' // 相应调整行高
                             }}
                           >
-                            {ocrText ? ocrText.substring(0, 20) : 'Waiting for recognition...'}
+                            {ocrText ? ocrText.substring(0, 25) : 'Waiting for recognition...'}
                           </div>
                         </div>
                       </div>
@@ -777,50 +777,56 @@ const CSVOCRDemo: React.FC = () => {
                       )}
                     </div>
                     
-                    {/* 移动端按钮布局优化 - 更大的触摸区域 */}
-                    <div className="flex flex-wrap justify-center gap-2 px-2">
-                      <Button
-                        onClick={() => captureAndProcessOCR(false)}
-                        disabled={isProcessingOCR || realTimeOCR}
-                        variant="outline"
-                        size="sm"
-                        className="text-xs px-4 py-3 flex-1 sm:flex-none min-w-0 touch-manipulation min-h-[44px]"
-                      >
-                        <Play className="w-3 h-3 sm:mr-1" />
-                        <span className="hidden sm:inline">Manual Recognition</span>
-                        <span className="sm:hidden">Manual</span>
-                      </Button>
-                      <Button
-                        onClick={toggleRealTimeOCR}
-                        disabled={!videoReady}
-                        variant={realTimeOCR ? "default" : "outline"}
-                        size="sm"
-                        className="text-xs px-4 py-3 flex-1 sm:flex-none min-w-0 touch-manipulation min-h-[44px]"
-                      >
-                        {realTimeOCR ? (
-                          <>
-                            <Square className="w-3 h-3 sm:mr-1" />
-                            <span className="hidden sm:inline">Stop Recognition</span>
-                            <span className="sm:hidden">Stop</span>
-                          </>
-                        ) : (
-                          <>
-                            <Play className="w-3 h-3 sm:mr-1" />
-                            <span className="hidden sm:inline">Real-time</span>
-                            <span className="sm:hidden">Real-time</span>
-                          </>
-                        )}
-                      </Button>
-                      <Button 
-                        onClick={stopCamera} 
-                        variant="outline" 
-                        size="sm"
-                        className="text-xs px-4 py-3 flex-1 sm:flex-none min-w-0 touch-manipulation min-h-[44px]"
-                      >
-                        <EyeOff className="w-3 h-3 sm:mr-1" />
-                        <span className="hidden sm:inline">Close</span>
-                        <span className="sm:hidden">Close</span>
-                      </Button>
+                    {/* 移动端按钮布局优化 - 重新布局 */}
+                    <div className="flex flex-col gap-3 px-2">
+                      {/* 第一行：Real-time 和 Close 按钮 */}
+                      <div className="flex justify-center gap-2">
+                        <Button
+                          onClick={toggleRealTimeOCR}
+                          disabled={!videoReady}
+                          variant={realTimeOCR ? "default" : "outline"}
+                          size="sm"
+                          className="text-xs px-4 py-3 flex-1 sm:flex-none min-w-0 touch-manipulation min-h-[44px]"
+                        >
+                          {realTimeOCR ? (
+                            <>
+                              <Square className="w-3 h-3 sm:mr-1" />
+                              <span className="hidden sm:inline">Stop Recognition</span>
+                              <span className="sm:hidden">Stop</span>
+                            </>
+                          ) : (
+                            <>
+                              <Play className="w-3 h-3 sm:mr-1" />
+                              <span className="hidden sm:inline">Real-time</span>
+                              <span className="sm:hidden">Real-time</span>
+                            </>
+                          )}
+                        </Button>
+                        <Button 
+                          onClick={stopCamera} 
+                          variant="outline" 
+                          size="sm"
+                          className="text-xs px-4 py-3 flex-1 sm:flex-none min-w-0 touch-manipulation min-h-[44px]"
+                        >
+                          <EyeOff className="w-3 h-3 sm:mr-1" />
+                          <span className="hidden sm:inline">Close</span>
+                          <span className="sm:hidden">Close</span>
+                        </Button>
+                      </div>
+                      
+                      {/* 第二行：Manual Recognition 按钮（更大） */}
+                      <div className="flex justify-center">
+                        <Button
+                          onClick={() => captureAndProcessOCR(false)}
+                          disabled={isProcessingOCR || realTimeOCR}
+                          variant="default"
+                          size="lg"
+                          className="text-sm px-8 py-4 touch-manipulation min-h-[52px] font-semibold"
+                        >
+                          <Play className="w-4 h-4 mr-2" />
+                          Manual Recognition
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 )}
