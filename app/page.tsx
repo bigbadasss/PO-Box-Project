@@ -167,7 +167,7 @@ const extractFirstKeyWord = (text: string): string => {
   return firstWordMatch ? firstWordMatch[1] : '';
 };
 
-// 优化的地址匹配算法 - 以数字后第一个单词为主要匹配要素
+// 道路名优先的包含匹配算法
 const findBestMatch = (ocrText: string, csvRow: CSVRow): {similarity: number, matchedFields: string[], matchedSegment: string} => {
   let bestSimilarity = 0;
   const matchedFields: string[] = [];
@@ -180,108 +180,142 @@ const findBestMatch = (ocrText: string, csvRow: CSVRow): {similarity: number, ma
   }
   
   const ocrNormalized = normalizeString(ocrText);
-  // 移除CSV地址的最后一个单词后进行匹配
-  const csvWords = normalizeString(csvValue).split(' ').filter(word => word.length > 0);
-  const csvForMatching = csvWords.slice(0, -1).join(' '); // 移除最后一个单词
-  const csvNormalized = csvForMatching;
+  const csvNormalized = normalizeString(csvValue);
   
-  // 1. 提取关键要素
-  const ocrFirstWord = extractFirstKeyWord(ocrText); // OCR数字后的第一个单词
+  // 1. 提取道路关键词（优先匹配要素）
+  const roadKeywords = ['road', 'rd', 'street', 'st', 'avenue', 'ave', 'drive', 'dr', 'lane', 'ln', 'way', 'close', 'court', 'ct', 'place', 'pl'];
+  
+  const ocrWords = ocrNormalized.split(' ').filter(word => word.length >= 2);
+  let roadName = '';
+  let hasRoadKeyword = false;
+  
+  // 找到道路关键词，提取道路名
+  for (let i = 0; i < ocrWords.length; i++) {
+    const word = ocrWords[i];
+    if (roadKeywords.includes(word)) {
+      hasRoadKeyword = true;
+      // 道路名通常在关键词之前
+      if (i > 0) {
+        roadName = ocrWords[i - 1];
+      }
+      break;
+    }
+  }
+  
+  // 如果没有找到道路关键词，取最长的词作为可能的道路名
+  if (!roadName && ocrWords.length > 0) {
+    roadName = ocrWords.reduce((longest, current) => 
+      current.length > longest.length ? current : longest
+    );
+  }
+  
+  console.log(`  道路名提取: "${roadName}" (包含道路关键词: ${hasRoadKeyword})`);
+  
+  // 2. 提取和匹配数字
   const ocrNumbers = ocrText.match(/\d+/g)?.join('') || '';
   const csvNumbers = csvValue.match(/\d+/g)?.join('') || '';
   
-  console.log(`  关键单词提取: OCR中数字后第一个单词 = "${ocrFirstWord}"`);
+  console.log(`  数字提取: OCR="${ocrNumbers}" vs CSV="${csvNumbers}"`);
   
-  // 2. 第一要素：数字后第一个单词匹配（权重最高）
-  let firstWordScore = 0;
-  if (ocrFirstWord) {
-    if (csvNormalized.includes(ocrFirstWord)) {
-      firstWordScore = 0.95; // 关键单词完全包含
-      console.log(`  ✅ 关键单词"${ocrFirstWord}"在CSV地址中找到`);
+  // 3. 道路名匹配（优先要素）
+  let roadMatchScore = 0;
+  if (roadName && roadName.length >= 3) {
+    if (csvNormalized.includes(roadName)) {
+      roadMatchScore = 0.9; // 道路名完全包含
+      console.log(`  ✅ 道路名匹配: "${roadName}" 在CSV地址中找到`);
     } else {
-      // 检查相似性
+      // 检查道路名的相似度
       const csvWords = csvNormalized.split(' ');
       csvWords.forEach(csvWord => {
         if (csvWord.length >= 3) {
-          const similarity = calculateSimilarity(ocrFirstWord, csvWord);
-          if (similarity > firstWordScore) {
-            firstWordScore = similarity * 0.9; // 相似匹配最高90分
+          const similarity = calculateSimilarity(roadName, csvWord);
+          if (similarity > roadMatchScore) {
+            roadMatchScore = similarity * 0.8; // 相似匹配最高80%
           }
         }
       });
-      console.log(`  关键单词"${ocrFirstWord}"最佳相似度: ${Math.round(firstWordScore * 100)}%`);
-    }
-  } else {
-    console.log(`  ❌ 未提取到关键单词（数字后的第一个单词）`);
-  }
-  
-  // 3. 第二要素：数字匹配（在关键单词匹配的基础上）
-  let numberScore = 0;
-  if (ocrNumbers && csvNumbers) {
-    if (csvNumbers.includes(ocrNumbers)) {
-      numberScore = 0.9; // 数字完全包含
-    } else {
-      numberScore = calculateSimilarity(ocrNumbers, csvNumbers) * 0.8;
+      console.log(`  道路名相似度: ${Math.round(roadMatchScore * 100)}%`);
     }
   }
   
-  // 4. 辅助要素：整体包含度
+  // 3. 整体包含匹配（辅助要素）
   let containmentScore = 0;
   if (csvNormalized.includes(ocrNormalized)) {
-    containmentScore = 0.95;
-  } else if (ocrNormalized.length >= 4) {
-    const ocrParts = ocrNormalized.split(' ').filter(part => part.length >= 2);
-    let foundParts = 0;
-    ocrParts.forEach(part => {
-      if (csvNormalized.includes(part)) {
-        foundParts++;
+    containmentScore = 0.95; // 完全包含
+    console.log(`  ✅ 完全包含匹配`);
+  } else {
+    // 分词包含检查
+    let foundWords = 0;
+    ocrWords.forEach(ocrWord => {
+      if (csvNormalized.includes(ocrWord)) {
+        foundWords++;
+        console.log(`    ✅ 找到词: "${ocrWord}"`);
       }
     });
-    containmentScore = foundParts / ocrParts.length * 0.9;
+    
+    if (ocrWords.length > 0) {
+      containmentScore = (foundWords / ocrWords.length) * 0.8; // 分词匹配最高80%
+      console.log(`  分词匹配: ${foundWords}/${ocrWords.length} = ${Math.round(containmentScore * 100)}%`);
+    }
   }
   
-  // 5. 新的评分体系（关键单词为主导）
+  // 4. 综合评分（道路名优先）
   const weights = {
-    firstWord: 0.6,      // 关键单词权重最高
-    number: 0.25,        // 数字验证权重  
-    containment: 0.15    // 整体包含度权重
+    roadName: 0.7,       // 道路名权重最高
+    containment: 0.3     // 整体包含权重
   };
   
-  bestSimilarity = (firstWordScore * weights.firstWord) + 
-                   (numberScore * weights.number) + 
-                   (containmentScore * weights.containment);
+  bestSimilarity = (roadMatchScore * weights.roadName) + (containmentScore * weights.containment);
   
-  // 6. 灵活的匹配条件
+  // 5. 数字验证（关键过滤条件）
+  let numberMatchValid = true; // 默认通过
+  let numberMatchReason = '';
+  
+  if (ocrNumbers && csvNumbers) {
+    // 如果OCR和CSV都有数字，则必须匹配
+    if (ocrNumbers === csvNumbers) {
+      numberMatchReason = `数字完全匹配 (${ocrNumbers})`;
+    } else {
+      numberMatchValid = false;
+      numberMatchReason = `数字不匹配 (OCR:${ocrNumbers} vs CSV:${csvNumbers})`;
+    }
+  } else if (ocrNumbers && !csvNumbers) {
+    // OCR有数字但CSV没有数字，不匹配
+    numberMatchValid = false;
+    numberMatchReason = `OCR有数字(${ocrNumbers})但CSV无数字`;
+  } else if (!ocrNumbers && csvNumbers) {
+    // OCR没有数字但CSV有数字，不匹配
+    numberMatchValid = false;
+    numberMatchReason = `OCR无数字但CSV有数字(${csvNumbers})`;
+  } else {
+    // 都没有数字，允许匹配
+    numberMatchReason = `都无数字，允许匹配`;
+  }
+  
+  console.log(`  数字验证: ${numberMatchValid} (${numberMatchReason})`);
+  
+  // 6. 匹配判断（道路名优先 + 数字验证）
   let isValidMatch = false;
   let matchReason = '';
   
-  if (!ocrNumbers) {
-    // 没有数字的情况：只需要关键单词匹配
-    if (firstWordScore >= 0.8) {
+  if (!numberMatchValid) {
+    // 数字验证不通过，直接拒绝
+    isValidMatch = false;
+    matchReason = `数字验证失败 (${numberMatchReason})`;
+  } else if (roadMatchScore >= 0.7) {
+    // 道路名匹配良好且数字验证通过
+    if (containmentScore >= 0.3) {
       isValidMatch = true;
-      matchReason = `纯街道匹配${Math.round(firstWordScore * 100)}% (无数字)`;
-    } else if (firstWordScore >= 0.7) {
-      isValidMatch = true;
-      matchReason = `街道名匹配${Math.round(firstWordScore * 100)}% (无数字)`;
+      matchReason = `道路名${Math.round(roadMatchScore * 100)}% + 包含度${Math.round(containmentScore * 100)}% + ${numberMatchReason}`;
     } else {
-      matchReason = `街道名匹配度不足 (${Math.round(firstWordScore * 100)}%, 无数字)`;
+      matchReason = `道路名匹配但包含度不足 (道路${Math.round(roadMatchScore * 100)}%, 包含${Math.round(containmentScore * 100)}%)`;
     }
+  } else if (containmentScore >= 0.8) {
+    // 高包含度可以弥补道路名匹配不足
+    isValidMatch = true;
+    matchReason = `高包含度匹配${Math.round(containmentScore * 100)}% + ${numberMatchReason}`;
   } else {
-    // 有数字的情况：需要关键单词 + 数字验证
-    if (firstWordScore >= 0.8) {
-      // 关键单词匹配度高，进一步检查数字
-      if (numberScore >= 0.7) {
-        isValidMatch = true;
-        matchReason = `关键单词${Math.round(firstWordScore * 100)}% + 数字${Math.round(numberScore * 100)}%`;
-      } else {
-        matchReason = `关键单词匹配但数字不符 (关键词${Math.round(firstWordScore * 100)}%, 数字${Math.round(numberScore * 100)}%)`;
-      }
-    } else if (firstWordScore >= 0.6 && numberScore >= 0.8) {
-      isValidMatch = true;
-      matchReason = `关键单词${Math.round(firstWordScore * 100)}% + 强数字匹配${Math.round(numberScore * 100)}%`;
-    } else {
-      matchReason = `关键单词匹配度不足 (${Math.round(firstWordScore * 100)}%)`;
-    }
+    matchReason = `道路名和包含度都不足 (道路${Math.round(roadMatchScore * 100)}%, 包含${Math.round(containmentScore * 100)}%)`;
   }
   
   if (isValidMatch) {
@@ -289,12 +323,10 @@ const findBestMatch = (ocrText: string, csvRow: CSVRow): {similarity: number, ma
     matchedSegment = ocrText;
   }
   
-  console.log(`=== 关键单词主导匹配 ===`);
+  console.log(`=== 道路名优先匹配 ===`);
   console.log(`OCR片段: "${ocrText}"`);
   console.log(`完整地址: "${csvValue}"`);
-  console.log(`匹配用地址: "${csvForMatching}" (已移除最后一个单词)`);
-  console.log(`  关键单词匹配: ${Math.round(firstWordScore * 100)}% ("${ocrFirstWord}")`);
-  console.log(`  数字匹配: ${Math.round(numberScore * 100)}% (OCR:"${ocrNumbers}" vs CSV:"${csvNumbers}")`);
+  console.log(`  道路名匹配: ${Math.round(roadMatchScore * 100)}% ("${roadName}")`);
   console.log(`  整体包含度: ${Math.round(containmentScore * 100)}%`);
   console.log(`  综合评分: ${Math.round(bestSimilarity * 100)}%`);
   console.log(`  匹配结果: ${isValidMatch} (${matchReason})`);
